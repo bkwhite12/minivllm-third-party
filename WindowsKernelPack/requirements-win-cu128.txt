@@ -1,0 +1,25 @@
+# Python runtime dependencies for the locked Windows dev baseline.
+#
+# GPU target: RTX 50-series / sm120
+# Python: 3.12.10
+# PyTorch CUDA runtime: cu128
+
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.9.1
+
+--extra-index-url https://pypi.org/simple
+transformers==4.51.0
+accelerate
+safetensors
+datasets
+pyyaml
+dacite
+loguru
+rich
+tqdm
+pydantic
+einops
+protobuf==6.33.6
+grpcio-tools==1.80.0
+pywin32==311
+triton-windows==3.5.1.post24

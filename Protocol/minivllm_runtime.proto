@@ -1,0 +1,216 @@
+﻿syntax = "proto3";
+
+package minivllm.runtime.v1;
+
+option csharp_namespace = "MiniVllm.Runtime.V1";
+
+// Top-level message discriminator for Envelope.
+enum MessageType {
+  MESSAGE_TYPE_UNSPECIFIED = 0;
+  HELLO = 1;
+  HELLO_REPLY = 2;
+  HEALTH = 3;
+  HEALTH_REPLY = 4;
+  LOAD_MODEL = 5;
+  LOAD_MODEL_REPLY = 6;
+  GENERATE = 7;
+  TOKEN = 8;
+  DONE = 9;
+  CANCEL = 10;
+  CANCEL_REPLY = 11;
+  ERROR = 12;
+  METRICS = 13;
+  SHUTDOWN = 14;
+  SHUTDOWN_REPLY = 15;
+}
+
+// Shared envelope for every Named Pipe frame.
+message Envelope {
+  uint32 protocol_version = 1;
+  MessageType type = 2;
+  string request_id = 3;
+  string session_id = 4;
+  string trace_id = 5;
+  uint64 timestamp_ms = 6;
+
+  oneof payload {
+    HelloRequest hello = 10;
+    HelloReply hello_reply = 11;
+    HealthRequest health = 12;
+    HealthReply health_reply = 13;
+    LoadModelRequest load_model = 14;
+    LoadModelReply load_model_reply = 15;
+    GenerateRequest generate = 16;
+    TokenChunk token = 17;
+    DoneReply done = 18;
+    CancelRequest cancel = 19;
+    CancelReply cancel_reply = 20;
+    ErrorReply error = 21;
+    MetricsReply metrics = 22;
+    ShutdownRequest shutdown = 23;
+    ShutdownReply shutdown_reply = 24;
+  }
+}
+
+message HelloRequest {
+  string client_name = 1;
+  string client_version = 2;
+}
+
+message HelloReply {
+  string worker_name = 1;
+  string worker_version = 2;
+  uint32 protocol_version = 3;
+  repeated string supported_features = 4;
+}
+
+message HealthRequest {}
+
+message HealthReply {
+  WorkerState state = 1;
+  string active_model = 2;
+  string backend = 3;
+  string runtime_version = 4;
+  string minivllm_commit = 5;
+  string kernel_pack_id = 6;
+  GpuInfo gpu = 7;
+}
+
+enum WorkerState {
+  WORKER_STATE_UNSPECIFIED = 0;
+  STARTING = 1;
+  INITIALIZING_RUNTIME = 2;
+  LOADING_MODEL = 3;
+  WARMING_UP = 4;
+  READY = 5;
+  BUSY = 6;
+  ERROR_STATE = 7;
+  SHUTTING_DOWN = 8;
+}
+
+message GpuInfo {
+  string name = 1;
+  string compute_capability = 2;
+  uint64 total_vram_bytes = 3;
+  uint64 free_vram_bytes = 4;
+  string driver_version = 5;
+}
+
+message LoadModelRequest {
+  string model_alias = 1;
+  string backend = 2;
+  bool warmup = 3;
+}
+
+message LoadModelReply {
+  bool loaded = 1;
+  string model_alias = 2;
+  string backend = 3;
+  string message = 4;
+}
+
+message GenerateRequest {
+  string model_alias = 1;
+  string prompt = 2;
+  uint32 max_new_tokens = 3;
+  bool stream = 4;
+  SamplingConfig sampling = 5;
+  bool stop_on_eos = 6;
+  bool use_chat_template = 7;
+  bool use_thinking = 8;
+}
+
+message SamplingConfig {
+  SamplingMethod method = 1;
+  float temperature = 2;
+  uint32 top_k = 3;
+  float top_p = 4;
+}
+
+enum SamplingMethod {
+  SAMPLING_METHOD_UNSPECIFIED = 0;
+  GREEDY = 1;
+  TOP_P = 2;
+}
+
+message TokenChunk {
+  string text = 1;
+  int32 token_id = 2;
+  uint32 index = 3;
+  bool is_special = 4;
+}
+
+message DoneReply {
+  string text = 1;
+  FinishReason finish_reason = 2;
+  GenerationMetrics metrics = 3;
+}
+
+enum FinishReason {
+  FINISH_REASON_UNSPECIFIED = 0;
+  EOS = 1;
+  MAX_TOKENS = 2;
+  CANCELLED = 3;
+  ERROR_FINISH = 4;
+}
+
+message GenerationMetrics {
+  uint32 prompt_tokens = 1;
+  uint32 generated_tokens = 2;
+  uint32 ttft_ms = 3;
+  uint32 total_latency_ms = 4;
+  float tokens_per_sec = 5;
+}
+
+message CancelRequest {
+  string target_request_id = 1;
+}
+
+message CancelReply {
+  bool accepted = 1;
+  string target_request_id = 2;
+}
+
+message ErrorReply {
+  ErrorCode code = 1;
+  string message = 2;
+  bool recoverable = 3;
+  string details = 4;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  PROTOCOL_VERSION_UNSUPPORTED = 1;
+  GPU_UNSUPPORTED = 2;
+  INSUFFICIENT_VRAM = 3;
+  MODEL_NOT_FOUND = 4;
+  MODEL_LOAD_FAILED = 5;
+  MISSING_PREBUILT_KERNEL = 6;
+  KERNEL_ABI_MISMATCH = 7;
+  TRITON_WARMUP_FAILED = 8;
+  REQUEST_CANCELLED = 9;
+  REQUEST_TIMEOUT = 10;
+  INTERNAL_ERROR = 11;
+}
+
+message MetricsReply {
+  RuntimeMetrics runtime = 1;
+}
+
+message RuntimeMetrics {
+  uint64 process_uptime_ms = 1;
+  uint64 total_requests = 2;
+  uint64 completed_requests = 3;
+  uint64 failed_requests = 4;
+  uint64 active_requests = 5;
+  uint64 allocated_vram_bytes = 6;
+  uint64 reserved_vram_bytes = 7;
+}
+
+message ShutdownRequest {
+  bool force = 1;
+}
+
+message ShutdownReply {
+  bool accepted = 1;
+}

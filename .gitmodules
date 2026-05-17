@@ -1,0 +1,3 @@
+[submodule "minivllm"]
+	path = minivllm
+	url = https://github.com/BoundlessWindMoon/minivllm.git

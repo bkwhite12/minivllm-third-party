@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Runtime — generated cache and logs
+Runtime/cache/
+Runtime/logs/
+
+# Installers — large binaries, downloaded separately
+installers/
+
+# IDE / tools
+.vs/
+.idea/
+*.sublime-workspace
+
+# OS
+Thumbs.db
+Desktop.ini
