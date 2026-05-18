@@ -33,6 +33,9 @@ class RuntimeMetricsSnapshot:
     completed_requests: int
     failed_requests: int
     active_requests: int
+    cancelled_requests: int
+    eos_completions: int
+    max_token_completions: int
 
 
 class InferenceService:
@@ -47,6 +50,9 @@ class InferenceService:
         self._total_requests = 0
         self._completed_requests = 0
         self._failed_requests = 0
+        self._cancelled_requests = 0
+        self._eos_completions = 0
+        self._max_token_completions = 0
 
     @property
     def adapter(self) -> UpstreamMiniVllmAdapter | None:
@@ -84,6 +90,8 @@ class InferenceService:
                         yield chunk
                 except GenerationCancelledError:
                     self._last_finish_reason = pb.CANCELLED
+                else:
+                    self._last_finish_reason = self._adapter.last_finish_reason
                 self._last_generated = self._adapter.last_stream_result
                 return
 
@@ -140,12 +148,18 @@ class InferenceService:
             tokens_per_sec=tokens_per_sec,
         )
 
-    def mark_completed(self, *, failed: bool = False) -> None:
+    def mark_completed(self, *, failed: bool = False, finish_reason: int = pb.MAX_TOKENS) -> None:
         with self._active_lock:
             if failed:
                 self._failed_requests += 1
             else:
                 self._completed_requests += 1
+                if finish_reason == pb.CANCELLED:
+                    self._cancelled_requests += 1
+                elif finish_reason == pb.EOS:
+                    self._eos_completions += 1
+                else:
+                    self._max_token_completions += 1
 
     def metrics_snapshot(self) -> RuntimeMetricsSnapshot:
         with self._active_lock:
@@ -154,6 +168,9 @@ class InferenceService:
                 completed_requests=self._completed_requests,
                 failed_requests=self._failed_requests,
                 active_requests=len(self._active_requests),
+                cancelled_requests=self._cancelled_requests,
+                eos_completions=self._eos_completions,
+                max_token_completions=self._max_token_completions,
             )
 
     @staticmethod

@@ -155,7 +155,25 @@ def _base_request(message_type: int) -> pb.Envelope:
 
 def _print_replies(replies: list[pb.Envelope]) -> None:
     for reply in replies:
-        print(reply)
+        if reply.type == pb.METRICS:
+            _print_metrics(reply)
+        else:
+            print(reply)
+
+
+def _print_metrics(reply: pb.Envelope) -> None:
+    rt = reply.metrics.runtime
+    print(f"METRICS:")
+    print(f"  process_uptime_ms:     {rt.process_uptime_ms}")
+    print(f"  total_requests:        {rt.total_requests}")
+    print(f"  completed_requests:    {rt.completed_requests}")
+    print(f"    cancelled:           {rt.cancelled_requests}")
+    print(f"    eos_completions:     {rt.eos_completions}")
+    print(f"    max_token:           {rt.max_token_completions}")
+    print(f"  failed_requests:       {rt.failed_requests}")
+    print(f"  active_requests:       {rt.active_requests}")
+    print(f"  allocated_vram_bytes:  {rt.allocated_vram_bytes}")
+    print(f"  reserved_vram_bytes:   {rt.reserved_vram_bytes}")
 
 
 def main() -> None:

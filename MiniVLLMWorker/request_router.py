@@ -132,7 +132,7 @@ class RequestRouter:
             done.done.metrics.ttft_ms = result.ttft_ms
             done.done.metrics.total_latency_ms = result.total_latency_ms
             done.done.metrics.tokens_per_sec = result.tokens_per_sec
-            self._inference_service.mark_completed()
+            self._inference_service.mark_completed(finish_reason=result.finish_reason)
             yield done
         except Exception:
             self._inference_service.mark_completed(failed=True)
@@ -191,6 +191,9 @@ class RequestRouter:
         runtime.completed_requests = snapshot.completed_requests
         runtime.failed_requests = snapshot.failed_requests
         runtime.active_requests = snapshot.active_requests
+        runtime.cancelled_requests = snapshot.cancelled_requests
+        runtime.eos_completions = snapshot.eos_completions
+        runtime.max_token_completions = snapshot.max_token_completions
         runtime.allocated_vram_bytes = allocated
         runtime.reserved_vram_bytes = reserved
         return reply

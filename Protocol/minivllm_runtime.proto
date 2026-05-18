@@ -205,6 +205,9 @@ message RuntimeMetrics {
   uint64 active_requests = 5;
   uint64 allocated_vram_bytes = 6;
   uint64 reserved_vram_bytes = 7;
+  uint64 cancelled_requests = 8;
+  uint64 eos_completions = 9;
+  uint64 max_token_completions = 10;
 }
 
 message ShutdownRequest {

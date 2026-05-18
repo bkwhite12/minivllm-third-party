@@ -59,6 +59,7 @@ class UpstreamMiniVllmAdapter:
         self._loaded: LoadedModelHandle | None = None
         self._kernel_pack_id = ""
         self._last_stream_result: GeneratedText | None = None
+        self._last_finish_reason: int = 0  # protobuf FinishReason (0 = unspecified)
         self._install_windows_megakernel_loader()
 
     @property
@@ -201,6 +202,7 @@ class UpstreamMiniVllmAdapter:
                     full_text=full_text,
                     completion_text=completion,
                 )
+                self._last_finish_reason = pb.CANCELLED
                 raise GenerationCancelledError("generation cancelled")
             logits = runner.run_decode(next_token, past_len)
             next_token = runner.sampler.sample(logits)
@@ -229,6 +231,7 @@ class UpstreamMiniVllmAdapter:
             full_text=full_text,
             completion_text=completion,
         )
+        self._last_finish_reason = pb.EOS if stopped_by_eos else pb.MAX_TOKENS
 
     def health_snapshot(self) -> dict[str, str]:
         loaded = self._loaded
@@ -243,6 +246,10 @@ class UpstreamMiniVllmAdapter:
     @property
     def last_stream_result(self) -> GeneratedText | None:
         return self._last_stream_result
+
+    @property
+    def last_finish_reason(self) -> int:
+        return self._last_finish_reason
 
     def to_generate_config(self, request: pb.GenerateRequest) -> dict[str, Any]:
         """Expose the normalized request mapping for diagnostics / tests."""
