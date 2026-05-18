@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import time
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass
 
 from Protocol.python_generated import minivllm_runtime_pb2 as pb
 from WindowsKernelPack.upstream_adapter import (
+    GenerationCancelledError,
     GeneratedText,
     ModelNotLoadedError,
     UpstreamMiniVllmAdapter,
@@ -25,18 +27,36 @@ class GenerationResult:
     tokens_per_sec: float
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeMetricsSnapshot:
+    total_requests: int
+    completed_requests: int
+    failed_requests: int
+    active_requests: int
+
+
 class InferenceService:
     """Generation boundary backed by the upstream adapter when available."""
 
     def __init__(self, adapter: UpstreamMiniVllmAdapter | None = None) -> None:
         self._adapter = adapter
         self._last_generated: GeneratedText | None = None
+        self._active_requests: dict[str, threading.Event] = {}
+        self._active_lock = threading.Lock()
+        self._last_finish_reason = pb.MAX_TOKENS
+        self._total_requests = 0
+        self._completed_requests = 0
+        self._failed_requests = 0
 
     @property
     def adapter(self) -> UpstreamMiniVllmAdapter | None:
         return self._adapter
 
-    def stream_generate(self, request: pb.GenerateRequest) -> Iterable[pb.TokenChunk]:
+    def stream_generate(
+        self,
+        request_id: str,
+        request: pb.GenerateRequest,
+    ) -> Iterable[pb.TokenChunk]:
         """Yield reply chunks for one request.
 
         With a loaded upstream adapter, current minivllm integration returns the
@@ -44,26 +64,52 @@ class InferenceService:
         text, not token callbacks. Without a loaded adapter, dev mode falls back
         to deterministic echo chunks so transport tests remain cheap.
         """
-        if self._adapter is not None and self._adapter.loaded is not None:
-            generated = self._adapter.generate_text(request)
-            self._last_generated = generated
-            chunk = pb.TokenChunk()
-            chunk.text = generated.completion_text
-            chunk.token_id = -1
-            chunk.index = 0
-            chunk.is_special = False
-            yield chunk
-            return
+        cancel_event = threading.Event()
+        with self._active_lock:
+            self._active_requests[request_id] = cancel_event
+            self._total_requests += 1
+        self._last_finish_reason = pb.MAX_TOKENS
+        try:
+            if self._adapter is not None and self._adapter.loaded is not None:
+                try:
+                    for generated_token in self._adapter.stream_generate_tokens(
+                        request,
+                        is_cancelled=cancel_event.is_set,
+                    ):
+                        chunk = pb.TokenChunk()
+                        chunk.text = generated_token.text
+                        chunk.token_id = generated_token.token_id
+                        chunk.index = generated_token.index
+                        chunk.is_special = generated_token.is_special
+                        yield chunk
+                except GenerationCancelledError:
+                    self._last_finish_reason = pb.CANCELLED
+                self._last_generated = self._adapter.last_stream_result
+                return
 
-        self._last_generated = None
-        text = request.prompt or ""
-        for index, char in enumerate(text):
-            chunk = pb.TokenChunk()
-            chunk.text = char
-            chunk.token_id = -1
-            chunk.index = index
-            chunk.is_special = False
-            yield chunk
+            self._last_generated = None
+            text = request.prompt or ""
+            for index, char in enumerate(text):
+                if cancel_event.is_set():
+                    self._last_finish_reason = pb.CANCELLED
+                    break
+                chunk = pb.TokenChunk()
+                chunk.text = char
+                chunk.token_id = -1
+                chunk.index = index
+                chunk.is_special = False
+                yield chunk
+        finally:
+            with self._active_lock:
+                self._active_requests.pop(request_id, None)
+
+    def cancel(self, request_id: str) -> bool:
+        with self._active_lock:
+            event = self._active_requests.get(request_id)
+        if event is None:
+            return False
+        event.set()
+        return True
 
     def complete_generation(
         self,
@@ -86,13 +132,29 @@ class InferenceService:
         )
         return GenerationResult(
             text=text,
-            finish_reason=pb.MAX_TOKENS,
+            finish_reason=self._last_finish_reason,
             prompt_tokens=prompt_tokens,
             generated_tokens=emitted_tokens,
             ttft_ms=ttft_ms,
             total_latency_ms=total_latency_ms,
             tokens_per_sec=tokens_per_sec,
         )
+
+    def mark_completed(self, *, failed: bool = False) -> None:
+        with self._active_lock:
+            if failed:
+                self._failed_requests += 1
+            else:
+                self._completed_requests += 1
+
+    def metrics_snapshot(self) -> RuntimeMetricsSnapshot:
+        with self._active_lock:
+            return RuntimeMetricsSnapshot(
+                total_requests=self._total_requests,
+                completed_requests=self._completed_requests,
+                failed_requests=self._failed_requests,
+                active_requests=len(self._active_requests),
+            )
 
     @staticmethod
     def _now_ms() -> int:

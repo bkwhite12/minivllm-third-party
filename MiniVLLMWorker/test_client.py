@@ -100,6 +100,26 @@ def generate_envelope(prompt: str) -> pb.Envelope:
     return env
 
 
+def cancel_envelope(target_request_id: str) -> pb.Envelope:
+    env = _base_request(pb.CANCEL)
+    env.cancel.target_request_id = target_request_id
+    return env
+
+
+def metrics_envelope() -> pb.Envelope:
+    env = _base_request(pb.METRICS)
+    env.metrics.SetInParent()
+    return env
+
+
+def load_model_envelope(model_alias: str, backend: str = "") -> pb.Envelope:
+    env = _base_request(pb.LOAD_MODEL)
+    env.load_model.model_alias = model_alias
+    env.load_model.backend = backend
+    env.load_model.warmup = False
+    return env
+
+
 def run_once(request: pb.Envelope) -> list[pb.Envelope]:
     replies: list[pb.Envelope] = []
     stream = connect()
@@ -108,7 +128,15 @@ def run_once(request: pb.Envelope) -> list[pb.Envelope]:
         while True:
             reply = read_message(stream, pb.Envelope())
             replies.append(reply)
-            if reply.type in (pb.HELLO_REPLY, pb.HEALTH_REPLY, pb.DONE, pb.ERROR):
+            if reply.type in (
+                pb.HELLO_REPLY,
+                pb.HEALTH_REPLY,
+                pb.LOAD_MODEL_REPLY,
+                pb.DONE,
+                pb.ERROR,
+                pb.CANCEL_REPLY,
+                pb.METRICS,
+            ):
                 return replies
     finally:
         stream.close()
@@ -135,14 +163,26 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("hello")
     sub.add_parser("health")
+    sub.add_parser("metrics")
+    load = sub.add_parser("load-model")
+    load.add_argument("--model-alias", required=True)
+    load.add_argument("--backend", default="")
     gen = sub.add_parser("generate")
     gen.add_argument("--prompt", required=True)
+    cancel = sub.add_parser("cancel")
+    cancel.add_argument("--target-request-id", required=True)
     args = parser.parse_args()
 
     if args.command == "hello":
         request = hello_envelope()
     elif args.command == "health":
         request = health_envelope()
+    elif args.command == "metrics":
+        request = metrics_envelope()
+    elif args.command == "load-model":
+        request = load_model_envelope(args.model_alias, args.backend)
+    elif args.command == "cancel":
+        request = cancel_envelope(args.target_request_id)
     else:
         request = generate_envelope(args.prompt)
 

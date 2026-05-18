@@ -1,0 +1,16 @@
+﻿{
+  "pack_id": "cp312-cu128-sm120",
+  "python_tag": "cp312",
+  "torch_version": "2.9.1+cu128",
+  "cuda_runtime": "12.8",
+  "cuda_toolkit": "12.8.1",
+  "target_arch": "sm120",
+  "variants": {
+    "default": "mini_vllm_mk_default.cp312-win_amd64.pyd",
+    "all_combined": "mini_vllm_mk_all_combined.cp312-win_amd64.pyd"
+  },
+  "sha256": {
+    "mini_vllm_mk_default.cp312-win_amd64.pyd": "65f46277cacda32ed3b88ef2330fc7dc8f6808870b8d5f6e73d2064d14c63b87",
+    "mini_vllm_mk_all_combined.cp312-win_amd64.pyd": "7e17566fb079623539569f61c9e2909af7a184ea6cd67fae68024906c0a2d140"
+  }
+}

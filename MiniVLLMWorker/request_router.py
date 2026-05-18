@@ -40,6 +40,8 @@ class RequestRouter:
     ) -> None:
         self._runtime_info = runtime_info or WorkerRuntimeInfo()
         self._inference_service = inference_service or InferenceService()
+        self._started_at_ms = self._now_ms()
+        self._model_configs: dict[str, str] = {}
 
     def handle(self, request: pb.Envelope) -> pb.Envelope | Iterable[pb.Envelope]:
         if request.protocol_version != PROTOCOL_VERSION:
@@ -54,8 +56,14 @@ class RequestRouter:
             return self._hello_reply(request)
         if request.type == pb.HEALTH:
             return self._health_reply(request)
+        if request.type == pb.LOAD_MODEL:
+            return self._load_model_reply(request)
         if request.type == pb.GENERATE:
             return self._generate_stream(request)
+        if request.type == pb.CANCEL:
+            return self._cancel_reply(request)
+        if request.type == pb.METRICS:
+            return self._metrics_reply(request)
 
         return self._error(
             request,
@@ -90,34 +98,102 @@ class RequestRouter:
         reply.health_reply.gpu.driver_version = info.gpu_driver_version
         return reply
 
+    def register_model_config(self, alias: str, config_path: str) -> None:
+        self._model_configs[alias] = config_path
+
     def _generate_stream(self, request: pb.Envelope) -> Iterable[pb.Envelope]:
         started_at_ms = self._now_ms()
         first_token_at_ms: int | None = None
         emitted_tokens = 0
 
-        for chunk in self._inference_service.stream_generate(request.generate):
-            if first_token_at_ms is None:
-                first_token_at_ms = self._now_ms()
-            token = self._base_reply(request, pb.TOKEN)
-            token.token.CopyFrom(chunk)
-            emitted_tokens += 1
-            yield token
+        try:
+            for chunk in self._inference_service.stream_generate(
+                request.request_id,
+                request.generate,
+            ):
+                if first_token_at_ms is None:
+                    first_token_at_ms = self._now_ms()
+                token = self._base_reply(request, pb.TOKEN)
+                token.token.CopyFrom(chunk)
+                emitted_tokens += 1
+                yield token
 
-        result = self._inference_service.complete_generation(
-            request.generate,
-            emitted_tokens=emitted_tokens,
-            started_at_ms=started_at_ms,
-            first_token_at_ms=first_token_at_ms,
-        )
-        done = self._base_reply(request, pb.DONE)
-        done.done.text = result.text
-        done.done.finish_reason = result.finish_reason
-        done.done.metrics.prompt_tokens = result.prompt_tokens
-        done.done.metrics.generated_tokens = result.generated_tokens
-        done.done.metrics.ttft_ms = result.ttft_ms
-        done.done.metrics.total_latency_ms = result.total_latency_ms
-        done.done.metrics.tokens_per_sec = result.tokens_per_sec
-        yield done
+            result = self._inference_service.complete_generation(
+                request.generate,
+                emitted_tokens=emitted_tokens,
+                started_at_ms=started_at_ms,
+                first_token_at_ms=first_token_at_ms,
+            )
+            done = self._base_reply(request, pb.DONE)
+            done.done.text = result.text
+            done.done.finish_reason = result.finish_reason
+            done.done.metrics.prompt_tokens = result.prompt_tokens
+            done.done.metrics.generated_tokens = result.generated_tokens
+            done.done.metrics.ttft_ms = result.ttft_ms
+            done.done.metrics.total_latency_ms = result.total_latency_ms
+            done.done.metrics.tokens_per_sec = result.tokens_per_sec
+            self._inference_service.mark_completed()
+            yield done
+        except Exception:
+            self._inference_service.mark_completed(failed=True)
+            raise
+
+    def _cancel_reply(self, request: pb.Envelope) -> pb.Envelope:
+        accepted = self._inference_service.cancel(request.cancel.target_request_id)
+        reply = self._base_reply(request, pb.CANCEL_REPLY)
+        reply.cancel_reply.accepted = accepted
+        reply.cancel_reply.target_request_id = request.cancel.target_request_id
+        return reply
+
+    def _load_model_reply(self, request: pb.Envelope) -> pb.Envelope:
+        alias = request.load_model.model_alias
+        config_path = self._model_configs.get(alias)
+        reply = self._base_reply(request, pb.LOAD_MODEL_REPLY)
+        reply.load_model_reply.model_alias = alias
+
+        adapter = self._inference_service.adapter
+        if adapter is None:
+            reply.load_model_reply.loaded = False
+            reply.load_model_reply.message = "no adapter is attached"
+            return reply
+        if config_path is None:
+            reply.load_model_reply.loaded = False
+            reply.load_model_reply.message = f"unknown model alias: {alias}"
+            return reply
+
+        handle = adapter.load_model_from_config(config_path, model_alias=alias)
+        health = adapter.health_snapshot()
+        self._runtime_info.active_model = health["active_model"]
+        self._runtime_info.backend = health["backend"]
+        self._runtime_info.kernel_pack_id = health["kernel_pack_id"]
+
+        reply.load_model_reply.loaded = True
+        reply.load_model_reply.backend = handle.backend
+        reply.load_model_reply.message = "loaded"
+        return reply
+
+    def _metrics_reply(self, request: pb.Envelope) -> pb.Envelope:
+        snapshot = self._inference_service.metrics_snapshot()
+        allocated = reserved = 0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                allocated = torch.cuda.memory_allocated()
+                reserved = torch.cuda.memory_reserved()
+        except Exception:
+            pass
+
+        reply = self._base_reply(request, pb.METRICS)
+        runtime = reply.metrics.runtime
+        runtime.process_uptime_ms = max(0, self._now_ms() - self._started_at_ms)
+        runtime.total_requests = snapshot.total_requests
+        runtime.completed_requests = snapshot.completed_requests
+        runtime.failed_requests = snapshot.failed_requests
+        runtime.active_requests = snapshot.active_requests
+        runtime.allocated_vram_bytes = allocated
+        runtime.reserved_vram_bytes = reserved
+        return reply
 
     def _error(
         self,

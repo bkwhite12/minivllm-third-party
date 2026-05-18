@@ -22,8 +22,8 @@ from pathlib import Path
 import torch
 
 
-def test_megakernel_jit(variant: str = "default") -> dict:
-    """JIT-compile a megakernel variant and run a smoke decode call."""
+def test_megakernel_jit(variant: str = "default", smoke: bool = True) -> dict:
+    """JIT-compile a megakernel variant and optionally run a smoke decode call."""
 
     kernel_dir = Path(__file__).resolve().parents[1] / "minivllm" / "kernels" / "megakernel_cuda"
 
@@ -32,7 +32,9 @@ def test_megakernel_jit(variant: str = "default") -> dict:
     if str(kernels_parent) not in sys.path:
         sys.path.insert(0, str(kernels_parent))
 
-    os.environ["TORCH_CUDA_ARCH_LIST"] = "9.0"  # sm120 -> 9.0 for CUDA 12.8
+    # RTX 5070 is Blackwell / sm120. PyTorch 2.9.1+cu128 exposes sm_120,
+    # so the extension build should target 12.0 rather than older Hopper 9.0.
+    os.environ["TORCH_CUDA_ARCH_LIST"] = "12.0"
 
     # Import triggers JIT compilation via megakernel_cuda/__init__.py
     t0 = time.perf_counter()
@@ -69,6 +71,15 @@ def test_megakernel_jit(variant: str = "default") -> dict:
             "compile_ms": round(compile_ms, 1),
             "error": f"Missing exports: {missing}",
             "stage": "export_check",
+        }
+
+    if not smoke:
+        return {
+            "variant": variant,
+            "jit_success": True,
+            "compile_ms": round(compile_ms, 1),
+            "smoke_pass": None,
+            "stage": "compile_only",
         }
 
     # Smoke test: create minimal tensors and call decode
@@ -215,8 +226,10 @@ def main() -> None:
     print(f"  CUDA:         {torch.version.cuda}")
     print("=" * 64)
 
+    compile_only = "--compile-only" in sys.argv
+
     # Test the default variant first (simplest, most tested)
-    result = test_megakernel_jit("default")
+    result = test_megakernel_jit("default", smoke=not compile_only)
     print(f"\n[default variant]")
     if not result["jit_success"]:
         print(f"  JIT compile: FAILED at stage '{result['stage']}'")
@@ -224,7 +237,9 @@ def main() -> None:
         sys.exit(1)
 
     print(f"  JIT compile: PASS  ({result['compile_ms']}ms)")
-    if result.get("smoke_pass"):
+    if result.get("stage") == "compile_only":
+        print("  Smoke decode: SKIPPED (compile-only mode)")
+    elif result.get("smoke_pass"):
         print(f"  Smoke decode: PASS  ({result['decode_ms']}ms, token={result['output_token_id']})")
     else:
         print(f"  Smoke decode: FAILED at stage '{result['stage']}'")
@@ -234,10 +249,12 @@ def main() -> None:
     # Also test all_combined if default passes
     print(f"\n[all_combined variant]")
     try:
-        r2 = test_megakernel_jit("all_combined")
+        r2 = test_megakernel_jit("all_combined", smoke=not compile_only)
         if r2["jit_success"]:
             print(f"  JIT compile: PASS  ({r2['compile_ms']}ms)")
-            if r2.get("smoke_pass"):
+            if r2.get("stage") == "compile_only":
+                print("  Smoke decode: SKIPPED (compile-only mode)")
+            elif r2.get("smoke_pass"):
                 print(f"  Smoke decode: PASS  ({r2['decode_ms']}ms, token={r2['output_token_id']})")
             else:
                 print(f"  Smoke decode: FAILED — {r2.get('error', 'unknown')}")

@@ -18,19 +18,23 @@ def main() -> None:
 
     adapter = UpstreamMiniVllmAdapter(mode=os.environ.get("MINIVLLM_MODE", "dev"))
     config_path = os.environ.get("MINIVLLM_CONFIG_PATH")
+    model_alias = os.environ.get("MINIVLLM_MODEL_ALIAS", "default")
     if config_path:
         adapter.load_model_from_config(
             config_path,
-            model_alias=os.environ.get("MINIVLLM_MODEL_ALIAS", "default"),
+            model_alias=model_alias,
         )
 
     health = adapter.health_snapshot()
     runtime_info = WorkerRuntimeInfo(
         active_model=health["active_model"],
         backend=health["backend"],
+        kernel_pack_id=health["kernel_pack_id"],
     )
     service = InferenceService(adapter=adapter)
     router = RequestRouter(runtime_info=runtime_info, inference_service=service)
+    if config_path:
+        router.register_model_config(model_alias, config_path)
     server = NamedPipeServer(pb.Envelope, router.handle)
     try:
         server.serve_forever()
