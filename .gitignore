@@ -17,6 +17,15 @@ installers/
 .idea/
 *.sublime-workspace
 
+# Unity generated — only track Assets/
+UnityProject/Mini-vLLM/Library/
+UnityProject/Mini-vLLM/Logs/
+UnityProject/Mini-vLLM/Packages/
+UnityProject/Mini-vLLM/ProjectSettings/
+UnityProject/Mini-vLLM/Temp/
+UnityProject/Mini-vLLM/UserSettings/
+UnityProject/Mini-vLLM/*.sln
+
 # OS
 Thumbs.db
 Desktop.ini

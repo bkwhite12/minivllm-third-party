@@ -43,7 +43,12 @@
       "Bash(git commit -m ' *)",
       "Bash(git config *)",
       "Bash(git rm *)",
-      "Bash(git reset *)"
+      "Bash(git reset *)",
+      "Bash(python -m grpc_tools.protoc -I Protocol --python_out=Protocol/python_generated Protocol/minivllm_runtime.proto)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\); print\\(sys.version\\)\")",
+      "Bash(/c/Users/BK白修/AppData/Local/Programs/Python/Python312/python.exe --version)",
+      "Bash(/c/Users/BK白修/AppData/Local/Programs/Python/Python312/python.exe -c \"import grpc_tools; print\\(grpc_tools.__file__\\)\")",
+      "Bash(\"/c/Users/BK白修/AppData/Local/Programs/Python/Python312/python.exe\" -m grpc_tools.protoc -I \"f:/CTest/Protocol\" --python_out=\"f:/CTest/Protocol/python_generated\" \"f:/CTest/Protocol/minivllm_runtime.proto\")"
     ],
     "additionalDirectories": [
       "C:\\Users\\BK白修\\.triton\\cache"
