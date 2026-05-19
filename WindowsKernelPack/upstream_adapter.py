@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -12,6 +13,23 @@ from Protocol.python_generated import minivllm_runtime_pb2 as pb
 
 from .bootstrap import BootstrapResult, initialize
 from .prebuilt_loader import load_prebuilt
+
+
+ROLE_MARKER_RE = re.compile(
+    r"(?im)(^|\n)\s*("
+    r"system|user|assistant|human|ai|"
+    r"系统|用户|玩家|助手|助理|旁白"
+    r")\s*[:：]"
+)
+
+ROLE_MARKER_PREFIX_AT_END_RE = re.compile(
+    r"(?im)(^|\n)\s*("
+    r"system|user|assistant|human|ai|"
+    r"系统|用户|玩家|助手|助理|旁白"
+    r")\s*$"
+)
+
+REPLACEMENT_CHAR = "\ufffd"
 
 
 @dataclass(slots=True)
@@ -44,6 +62,87 @@ class GenerationCancelledError(RuntimeError):
 
 class ModelNotLoadedError(RuntimeError):
     """Raised when generation is requested before a model is loaded."""
+
+
+def _first_role_marker(text: str) -> re.Match[str] | None:
+    return ROLE_MARKER_RE.search(text)
+
+
+def _visible_text_before_unstable_decode(text: str) -> str:
+    """Do not stream tokenizer replacement chars caused by partial byte tokens.
+
+    Some tokenizers can temporarily decode an incomplete generated token sequence
+    as U+FFFD and then repair it once later token ids arrive. Streaming that
+    transient character is irreversible for clients, so keep the suffix private
+    until it decodes cleanly.
+    """
+    replacement_at = text.find(REPLACEMENT_CHAR)
+    if replacement_at < 0:
+        return text
+    return text[:replacement_at]
+
+
+def _visible_text_before_role_marker_prefix(text: str) -> str:
+    """Hold back a trailing partial role marker until it is proven safe.
+
+    In streaming mode the model can emit "\nUser" first and ":" one token later.
+    If we stream the prefix immediately, marker detection on the next token can
+    stop generation but cannot retract the already-sent "User".  Keeping that
+    ambiguous suffix private makes role-marker stopping clean for clients.
+    """
+    match = ROLE_MARKER_PREFIX_AT_END_RE.search(text)
+    if match is None:
+        return text
+    return text[: match.start()]
+
+
+def _parse_tagged_prompt_as_messages(prompt: str) -> list[dict[str, str]]:
+    """Parse the runner's tagged transcript into chat-template messages.
+
+    Expected shape:
+
+        System: ...
+        User: ...
+        Assistant: ...
+        User: ...
+        Assistant:
+
+    The final empty Assistant marker is a generation cue and is not included.
+    If parsing finds no explicit user message, fall back to a single user turn.
+    """
+    messages: list[dict[str, str]] = []
+    current_role: str | None = None
+    current_lines: list[str] = []
+    tag_re = re.compile(r"^(System|User|Assistant)\s*:\s*(.*)$", re.IGNORECASE)
+
+    def flush() -> None:
+        nonlocal current_role, current_lines
+        if current_role is None:
+            return
+        content = "\n".join(current_lines).strip()
+        if content:
+            role = {
+                "system": "system",
+                "user": "user",
+                "assistant": "assistant",
+            }[current_role.lower()]
+            messages.append({"role": role, "content": content})
+        current_role = None
+        current_lines = []
+
+    for line in (prompt or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        match = tag_re.match(line)
+        if match is not None:
+            flush()
+            current_role = match.group(1)
+            current_lines = [match.group(2)] if match.group(2) else []
+        elif current_role is not None:
+            current_lines.append(line)
+    flush()
+
+    if not any(message["role"] == "user" for message in messages):
+        return [{"role": "user", "content": prompt or ""}]
+    return messages
 
 
 class UpstreamMiniVllmAdapter:
@@ -135,6 +234,7 @@ class UpstreamMiniVllmAdapter:
         if hasattr(loaded.model, "reset"):
             loaded.model.reset()
         runner = ModelRunner(model=loaded.model, tokenizer=loaded.tokenizer, cfg=cfg)
+        self._apply_structured_chat_template_if_needed(runner, cfg, request)
         full_text = runner.inference()
         prompt = request.prompt or ""
         completion = full_text[len(prompt):] if prompt and full_text.startswith(prompt) else full_text
@@ -156,6 +256,7 @@ class UpstreamMiniVllmAdapter:
         if hasattr(loaded.model, "reset"):
             loaded.model.reset()
         runner = ModelRunner(model=loaded.model, tokenizer=loaded.tokenizer, cfg=cfg)
+        self._apply_structured_chat_template_if_needed(runner, cfg, request)
         runner.use_progress = False
 
         input_ids = runner.input_ids
@@ -163,7 +264,38 @@ class UpstreamMiniVllmAdapter:
         prompt_seq_len = input_ids.shape[1]
         past_len = 0
         generated_ids: list[int] = []
-        previous_text = ""
+        emitted_text = ""
+        decoded_text = ""
+        stopped_by_eos = False
+        stopped_by_role_marker = False
+
+        def publish_delta(token_id: int, index: int) -> GeneratedToken | None:
+            nonlocal emitted_text, decoded_text, stopped_by_role_marker
+            decoded_text = runner.tokenizer.decode(generated_ids, skip_special_tokens=True)
+            visible_text = _visible_text_before_unstable_decode(decoded_text)
+            marker = _first_role_marker(visible_text)
+            if marker is not None:
+                visible_text = visible_text[: marker.start()]
+                stopped_by_role_marker = True
+            else:
+                visible_text = _visible_text_before_role_marker_prefix(visible_text)
+
+            if not visible_text.startswith(emitted_text):
+                # A previously unstable tokenizer decode was repaired. Because
+                # unstable U+FFFD suffixes are withheld, this should normally
+                # only happen before any meaningful client-visible text.
+                common_len = 0
+                max_common = min(len(visible_text), len(emitted_text))
+                while common_len < max_common and visible_text[common_len] == emitted_text[common_len]:
+                    common_len += 1
+                if common_len < len(emitted_text):
+                    emitted_text = visible_text[:common_len]
+
+            delta = visible_text[len(emitted_text) :]
+            emitted_text = visible_text
+            if delta:
+                return GeneratedToken(text=delta, token_id=token_id, index=index)
+            return None
 
         cu_seqlens_q_prefill = torch.tensor(
             [0, prompt_seq_len], dtype=torch.long, device=runner.device
@@ -179,24 +311,24 @@ class UpstreamMiniVllmAdapter:
         token_id = int(next_token.item())
         generated_ids.append(token_id)
         past_len += prompt_seq_len
-        text = runner.tokenizer.decode(generated_ids, skip_special_tokens=True)
-        delta = text[len(previous_text):]
-        previous_text = text
-        if delta:
-            yield GeneratedToken(text=delta, token_id=token_id, index=0)
+        token = publish_delta(token_id, 0)
+        if token is not None:
+            yield token
 
         current_tokens = 1
         stopped_by_eos = token_id in runner.eos_token_ids
-        while current_tokens < runner.max_new_tokens and not stopped_by_eos:
+        while (
+            current_tokens < runner.max_new_tokens
+            and not stopped_by_eos
+            and not stopped_by_role_marker
+        ):
             if is_cancelled is not None and is_cancelled():
-                full_text = runner.tokenizer.decode(
-                    input_ids[0], skip_special_tokens=True
-                ) + previous_text
+                full_text = (request.prompt or "") + emitted_text
                 prompt = request.prompt or ""
                 completion = (
                     full_text[len(prompt):]
                     if prompt and full_text.startswith(prompt)
-                    else previous_text
+                    else emitted_text
                 )
                 self._last_stream_result = GeneratedText(
                     full_text=full_text,
@@ -209,29 +341,23 @@ class UpstreamMiniVllmAdapter:
             token_id = int(next_token.item())
             generated_ids.append(token_id)
             past_len += 1
-            text = runner.tokenizer.decode(generated_ids, skip_special_tokens=True)
-            delta = text[len(previous_text):]
-            previous_text = text
-            if delta:
-                yield GeneratedToken(
-                    text=delta,
-                    token_id=token_id,
-                    index=current_tokens,
-                )
+            token = publish_delta(token_id, current_tokens)
+            if token is not None:
+                yield token
             current_tokens += 1
             if token_id in runner.eos_token_ids:
                 stopped_by_eos = True
 
-        full_text = runner.tokenizer.decode(
-            input_ids[0], skip_special_tokens=True
-        ) + previous_text
+        full_text = (request.prompt or "") + emitted_text
         prompt = request.prompt or ""
-        completion = full_text[len(prompt):] if prompt and full_text.startswith(prompt) else previous_text
+        completion = full_text[len(prompt):] if prompt and full_text.startswith(prompt) else emitted_text
         self._last_stream_result = GeneratedText(
             full_text=full_text,
             completion_text=completion,
         )
-        self._last_finish_reason = pb.EOS if stopped_by_eos else pb.MAX_TOKENS
+        self._last_finish_reason = (
+            pb.EOS if stopped_by_eos or stopped_by_role_marker else pb.MAX_TOKENS
+        )
 
     def health_snapshot(self) -> dict[str, str]:
         loaded = self._loaded
@@ -329,6 +455,28 @@ class UpstreamMiniVllmAdapter:
         """Avoid fragile Gloo init on Windows when tensor parallel world size is 1."""
         dist.get_rank = lambda *args, **kwargs: 0
         dist.get_world_size = lambda *args, **kwargs: 1
+
+    @staticmethod
+    def _apply_structured_chat_template_if_needed(runner, cfg, request: pb.GenerateRequest) -> None:
+        if not request.use_chat_template:
+            return
+        if getattr(runner.tokenizer, "chat_template", None) is None:
+            return
+
+        messages = _parse_tagged_prompt_as_messages(request.prompt or "")
+        input_ids = runner.tokenizer.apply_chat_template(
+            messages,
+            add_generation_prompt=True,
+            enable_thinking=getattr(cfg.inference, "use_thinking", True),
+            return_tensors="pt",
+        ).to(runner.device)
+        runner.input_ids = input_ids
+
+        import torch
+
+        runner.position_ids = torch.arange(
+            runner.input_ids.shape[1], device=runner.device
+        ).unsqueeze(0)
 
     @staticmethod
     def _sampling_method_name(method: int) -> str:

@@ -13,12 +13,12 @@
             "state": {
               "type": "markdown",
               "state": {
-                "file": "unity_client_implementation_plan_20260519.md",
+                "file": "explicit_memory_context_test_20260520.md",
                 "mode": "source",
                 "source": false
               },
               "icon": "lucide-file",
-              "title": "unity_client_implementation_plan_20260519"
+              "title": "explicit_memory_context_test_20260520"
             }
           }
         ]
@@ -185,10 +185,12 @@
   },
   "active": "a259db9bfbb48311",
   "lastOpenFiles": [
+    "unity_client_implementation_plan_20260519.md",
+    "unity_phase3_implementation_report_20260519.md",
+    "unity_phase2_implementation_report_20260519.md",
     "worker_launcher_note_20260519.md",
     "unity_phase1_implementation_report_20260519.md",
     "completion_reason_counters_20260519.md",
-    "unity_client_implementation_plan_20260519.md",
     "minivllm_integration_analysis_20260519.md",
     "current_status_report_20260519.md",
     "completion_reason_counters_20260519.md.tmp.14500.a692d7859bed",
