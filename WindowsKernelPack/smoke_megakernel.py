@@ -32,9 +32,10 @@ def test_megakernel_jit(variant: str = "default", smoke: bool = True) -> dict:
     if str(kernels_parent) not in sys.path:
         sys.path.insert(0, str(kernels_parent))
 
-    # RTX 5070 is Blackwell / sm120. PyTorch 2.9.1+cu128 exposes sm_120,
-    # so the extension build should target 12.0 rather than older Hopper 9.0.
-    os.environ["TORCH_CUDA_ARCH_LIST"] = "12.0"
+    # Respect the caller's target architecture. build_megakernel.ps1 sets this
+    # explicitly so the same smoke/build helper can cross-compile sm86/sm89/sm120
+    # packs from one Windows build machine.
+    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "12.0")
 
     # Import triggers JIT compilation via megakernel_cuda/__init__.py
     t0 = time.perf_counter()

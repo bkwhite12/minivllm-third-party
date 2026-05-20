@@ -1,0 +1,36 @@
+{
+  "pack_id": "cp312-cu128-sm86",
+  "created_at_utc": "2026-05-20T16:51:57.1845419Z",
+  "project_root": ".",
+  "upstream_root": "minivllm",
+  "upstream_commit": "151da0fbf421907323a84495801e737586d60bfe",
+  "torch_cuda_arch_list": "8.6",
+  "python": "3.12.10",
+  "python_executable": "python.exe",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "torch": "2.9.1+cu128",
+  "torch_cuda": "12.8",
+  "triton": "3.5.1",
+  "gpu_name": "NVIDIA GeForce RTX 5070",
+  "gpu_capability": "12.0",
+  "nvcc": "nvcc.EXE",
+  "cl": "cl.EXE",
+  "ninja": "ninja.EXE",
+  "variants": [
+    {
+      "variant": "default",
+      "file": "mini_vllm_mk_default.cp312-win_amd64.pyd",
+      "size_bytes": 734208,
+      "sha256": "babfc03467e3cddf6b2c2a364c33c1878fc198917d212dd45e91d4120132ab14",
+      "source_pyd": "Runtime\\build\\megakernel_torch_extensions\\cp312-cu128-sm86\\mini_vllm_mk_default\\mini_vllm_mk_default.pyd"
+    },
+    {
+      "variant": "all_combined",
+      "file": "mini_vllm_mk_all_combined.cp312-win_amd64.pyd",
+      "size_bytes": 686080,
+      "sha256": "7a1a9e0e43c588b3c2007bf2ea619295216811474a83a6377469604183c4ce6c",
+      "source_pyd": "Runtime\\build\\megakernel_torch_extensions\\cp312-cu128-sm86\\mini_vllm_mk_all_combined\\mini_vllm_mk_all_combined.pyd"
+    }
+  ],
+  "path_policy": "project paths are relative; external toolchain paths are recorded by executable name only"
+}

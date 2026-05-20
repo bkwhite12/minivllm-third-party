@@ -418,7 +418,7 @@ def main() -> None:
     parser.add_argument("--max-new-tokens", type=int, default=1024)
     parser.add_argument(
         "--output",
-        default="F:/CTest/Runtime/logs/dialogue_reliability/latest.jsonl",
+        default="Runtime/logs/dialogue_reliability/latest.jsonl",
     )
     parser.add_argument(
         "--transcript",

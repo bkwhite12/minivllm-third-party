@@ -8,16 +8,50 @@ import sys
 from pathlib import Path
 
 
-def load_prebuilt(variant: str = "default"):
+def _runtime_pack_id() -> str:
+    override = os.environ.get("MINIVLLM_KERNEL_PACK_ID")
+    if override:
+        return override
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            major, minor = torch.cuda.get_device_capability(0)
+            return f"cp312-cu128-sm{major}{minor}"
+    except Exception:
+        pass
+
+    return "cp312-cu128-sm120"
+
+
+def _available_pack_ids() -> list[str]:
     root = Path(__file__).resolve().parent
+    prebuilt_root = root / "prebuilt"
+    if not prebuilt_root.exists():
+        return []
+    return sorted(
+        path.name
+        for path in prebuilt_root.iterdir()
+        if path.is_dir() and path.name.startswith("cp312-cu128-sm")
+    )
+
+
+def load_prebuilt(variant: str = "default", pack_id: str | None = None):
+    root = Path(__file__).resolve().parent
+    resolved_pack_id = pack_id or _runtime_pack_id()
     artifact = (
         root
         / "prebuilt"
-        / "cp312-cu128-sm120"
+        / resolved_pack_id
         / f"mini_vllm_mk_{variant}.cp312-win_amd64.pyd"
     )
     if not artifact.exists():
-        raise FileNotFoundError(f"Prebuilt megakernel not found: {artifact}")
+        available = ", ".join(_available_pack_ids()) or "none"
+        raise FileNotFoundError(
+            f"Prebuilt megakernel not found: {artifact} "
+            f"(pack_id={resolved_pack_id!r}, available_packs=[{available}])"
+        )
 
     module_name = f"mini_vllm_mk_{variant}"
     # On Windows, extension modules may depend on torch DLLs that are not on the
@@ -35,11 +69,20 @@ def load_prebuilt(variant: str = "default"):
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    module.__minivllm_pack_id__ = resolved_pack_id
+    module.__minivllm_artifact__ = str(artifact)
     return module
 
 
 def main() -> None:
-    module = load_prebuilt("default")
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--variant", default="default")
+    parser.add_argument("--pack-id", default=None)
+    args = parser.parse_args()
+
+    module = load_prebuilt(args.variant, pack_id=args.pack_id)
     expected = [
         "decode",
         "decode_with_logits",
@@ -53,6 +96,8 @@ def main() -> None:
         raise RuntimeError(f"Missing exports: {missing}")
     print("prebuilt_load=PASS")
     print(f"module={module.__name__}")
+    print(f"variant={args.variant}")
+    print(f"pack_id={args.pack_id or _runtime_pack_id()}")
     print("exports=PASS")
 
 

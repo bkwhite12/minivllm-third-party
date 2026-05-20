@@ -8,6 +8,7 @@ __pycache__/
 *.egg-info/
 
 # Runtime — generated cache, logs, and downloaded model weights
+Runtime/build/
 Runtime/cache/
 Runtime/logs/
 Runtime/models/
@@ -16,6 +17,7 @@ Runtime/models/
 installers/
 
 # IDE / tools
+.claude/
 .vs/
 .idea/
 *.sublime-workspace

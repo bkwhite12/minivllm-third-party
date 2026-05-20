@@ -435,7 +435,7 @@ class UpstreamMiniVllmAdapter:
             try:
                 module = load_prebuilt(resolved_variant)
                 megakernel_cuda._modules[resolved_variant] = module
-                self._kernel_pack_id = "cp312-cu128-sm120"
+                self._kernel_pack_id = getattr(module, "__minivllm_pack_id__", "")
                 return module
             except FileNotFoundError:
                 if not allow_jit:
